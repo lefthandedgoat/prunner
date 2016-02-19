@@ -132,8 +132,6 @@ let ( &&&& ) description f =
 let ( &&! ) description _ =
     (last suites).Tests <- Test(description, skipped, ng())::(last suites).Tests
 
-let maxDOP = 30
-
 let private runtest (test : Test) =
   reporter.Post(Reporter.TestStart(test.Description, test.Id))
   if System.Object.ReferenceEquals(test.Func, todo) then
@@ -159,7 +157,7 @@ let newWorker (manager : actor<Manager>) test : actor<Worker> =
       }
     loop ())
 
-let newManager () : actor<Manager> =
+let newManager maxDOP : actor<Manager> =
   let sw = System.Diagnostics.Stopwatch.StartNew()
   actor.Start(fun self ->
     let rec loop workers maxWorkers doneWorkers =
@@ -195,10 +193,10 @@ let newManager () : actor<Manager> =
       }
     loop [] 0 0)
 
-let run () =
+let run maxDOP =
   // suites list is in reverse order and have to be reversed before running the tests
   suites <- List.rev suites
-  let manager = newManager()
+  let manager = newManager maxDOP
   manager.Post(Manager.Initialize(suites))
   manager.Post(Manager.Start)
 
@@ -216,6 +214,7 @@ context "Test Context"
     if i % 10 = 0 then failwith "mod error"
     ctx.printfn "A guid %A" (ng()))
 
-run()
+let maxDOP = 30
+run maxDOP
 
 System.Console.ReadKey() |> ignore
