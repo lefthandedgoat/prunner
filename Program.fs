@@ -16,7 +16,7 @@ type Reporter =
   | Todo of id:Guid
   | Pass of id:Guid
   | Fail of id:Guid * ex:Exception
-  | RunOver of minutes:int * seconds:int
+  | RunOver of minutes:int * seconds:int * AsyncReplyChannel<int>
 
 let colorWriteReset color message =
   Console.ForegroundColor <- color
@@ -73,13 +73,14 @@ let newReporter () : actor<Reporter> =
           printMessages id
           colorWriteReset color.Yellow "Todo"
           return! loop passed failed skipped (todo + 1)
-        | Reporter.RunOver (minutes, seconds) ->
+        | Reporter.RunOver (minutes, seconds, replyChannel) ->
             printfn ""
             printfn "%i minutes %i seconds to execute" minutes seconds
             colorWriteReset color.Green (sprintf "%i passed" passed)
             colorWriteReset color.Yellow (sprintf "%i skipped" skipped)
             colorWriteReset color.Yellow (sprintf "%i todo" todo)
             colorWriteReset color.Red (sprintf "%i failed" failed)
+            replyChannel.Reply failed
             return ()
       }
     loop 0 0 0 0)
@@ -102,7 +103,7 @@ end
 
 type Manager =
   | Initialize of Suite list
-  | Start
+  | Start of AsyncReplyChannel<int>
   | Run of count:int
   | WorkerDone
 
@@ -160,45 +161,46 @@ let newWorker (manager : actor<Manager>) test : actor<Worker> =
 let newManager maxDOP : actor<Manager> =
   let sw = System.Diagnostics.Stopwatch.StartNew()
   actor.Start(fun self ->
-    let rec loop workers maxWorkers doneWorkers =
+    let rec loop workers maxWorkers doneWorkers replyChannel =
       async {
         let! msg = self.Receive ()
         match msg with
         | Manager.Initialize (suites) ->
           //build a worker per suite/test combo and give them their work
           let workers = suites |> List.map (fun suite -> suite.Tests |> List.map (fun test -> newWorker self test)) |> List.concat |> List.rev
-          return! loop workers workers.Length 0
-        | Manager.Start ->
+          return! loop workers workers.Length 0 replyChannel
+        | Manager.Start(replyChannel) ->
           //kick off the initial X workers
           self.Post(Manager.Run maxDOP)
-          return! loop workers maxWorkers doneWorkers
+          return! loop workers maxWorkers doneWorkers (Some replyChannel)
         | Manager.Run(count) ->
           if count = 0 then
-            return! loop workers maxWorkers doneWorkers
+            return! loop workers maxWorkers doneWorkers replyChannel
           else
             match workers with
-            | [] -> return! loop [] maxWorkers doneWorkers
+            | [] -> return! loop [] maxWorkers doneWorkers replyChannel
             | head :: tail ->
               head.Post(Worker.Run)
               self.Post(Manager.Run(count - 1))
-              return! loop tail maxWorkers doneWorkers
+              return! loop tail maxWorkers doneWorkers replyChannel
         | Manager.WorkerDone ->
           self.Post(Manager.Run(1))
           let doneWorkers = doneWorkers + 1
           if doneWorkers = maxWorkers then
-            reporter.Post(Reporter.RunOver(int sw.Elapsed.TotalMinutes, int sw.Elapsed.TotalSeconds))
+            let failed = reporter.PostAndReply(fun replyChannel -> Reporter.RunOver(int sw.Elapsed.TotalMinutes, int sw.Elapsed.TotalSeconds, replyChannel))
+            replyChannel.Value.Reply failed
             return ()
           else
-            return! loop workers maxWorkers doneWorkers
+            return! loop workers maxWorkers doneWorkers replyChannel
       }
-    loop [] 0 0)
+    loop [] 0 0 None)
 
 let run maxDOP =
   // suites list is in reverse order and have to be reversed before running the tests
   suites <- List.rev suites
   let manager = newManager maxDOP
   manager.Post(Manager.Initialize(suites))
-  manager.Post(Manager.Start)
+  manager.PostAndReply(fun replyChannel -> Manager.Start replyChannel)
 
 //demo
 context "Test Context"
@@ -215,6 +217,5 @@ context "Test Context"
     ctx.printfn "A guid %A" (ng()))
 
 let maxDOP = 30
-run maxDOP
-
-System.Console.ReadKey() |> ignore
+let failedTest = run maxDOP
+printfn "final failed count %A" failedTest
