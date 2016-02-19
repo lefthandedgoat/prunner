@@ -3,7 +3,7 @@ open System.Reflection
 
 [<assembly: AssemblyTitleAttribute("prunner")>]
 [<assembly: AssemblyProductAttribute("prunner")>]
-[<assembly: AssemblyDescriptionAttribute("Super simple f# parallel unit test library")>]
+[<assembly: AssemblyDescriptionAttribute("A self contained basic load testing tool")>]
 [<assembly: AssemblyVersionAttribute("1.0")>]
 [<assembly: AssemblyFileVersionAttribute("1.0")>]
 do ()
