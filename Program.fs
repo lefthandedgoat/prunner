@@ -35,9 +35,7 @@ let newReporter () : actor<Reporter> =
 
 type TestContext (testId:Guid, reporter : actor<Reporter>) = class
   member x.TestId = testId
-  member x.printfn =
-    fun msg ->
-      reporter.Post(Print(msg, x.TestId))
+  member x.printfn fmtStr = Printf.kprintf (fun msg -> reporter.Post(Print(msg, x.TestId))) fmtStr
 end
 
 type Test (description: string, func : (TestContext -> unit), id : Guid) =
@@ -159,10 +157,9 @@ context "Test Context"
 [1..200]
 |> List.iter (fun i ->
   sprintf "Test %i" i &&& fun ctx ->
-    ctx.printfn <| sprintf "A guid %A" (ng())
-    let msg = sprintf "I am test %i" i
-    ctx.printfn msg
-    ctx.printfn <| sprintf "A guid %A" (ng())
+    ctx.printfn "A guid %A" (ng())
+    ctx.printfn "I am test %i" i
+    ctx.printfn "A guid %A" (ng())
     ())
 
 run()
