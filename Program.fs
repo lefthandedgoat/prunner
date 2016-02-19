@@ -134,7 +134,7 @@ let ( &&! ) description _ =
 
 let maxDOP = 30
 
-let private runtest (suite : Suite) (test : Test) =
+let private runtest (test : Test) =
   reporter.Post(Reporter.TestStart(test.Description, test.Id))
   if System.Object.ReferenceEquals(test.Func, todo) then
     reporter.Post(Reporter.Todo test.Id)
@@ -146,14 +146,14 @@ let private runtest (suite : Suite) (test : Test) =
       reporter.Post(Reporter.Pass test.Id)
     with ex -> reporter.Post(Reporter.Fail(test.Id, ex))
 
-let newWorker (manager : actor<Manager>) suite test : actor<Worker> =
+let newWorker (manager : actor<Manager>) test : actor<Worker> =
   actor.Start(fun self ->
     let rec loop () =
       async {
         let! msg = self.Receive ()
         match msg with
         | Worker.Run ->
-          runtest suite test
+          runtest test
           manager.Post(Manager.WorkerDone)
           return ()
       }
@@ -168,7 +168,7 @@ let newManager () : actor<Manager> =
         match msg with
         | Manager.Initialize (suites) ->
           //build a worker per suite/test combo and give them their work
-          let workers = suites |> List.map (fun suite -> suite.Tests |> List.map (fun test -> newWorker self suite test)) |> List.concat |> List.rev
+          let workers = suites |> List.map (fun suite -> suite.Tests |> List.map (fun test -> newWorker self test)) |> List.concat |> List.rev
           return! loop workers workers.Length 0
         | Manager.Start ->
           //kick off the initial X workers
@@ -196,7 +196,6 @@ let newManager () : actor<Manager> =
     loop [] 0 0)
 
 let run () =
-  let stopWatch = Diagnostics.Stopwatch.StartNew
   // suites list is in reverse order and have to be reversed before running the tests
   suites <- List.rev suites
   let manager = newManager()
@@ -206,7 +205,7 @@ let run () =
 //demo
 context "Test Context"
 
-"Skipped test" &&! fun ctx -> ()
+"Skipped test" &&! fun _ -> ()
 
 "Todo test" &&& todo
 
