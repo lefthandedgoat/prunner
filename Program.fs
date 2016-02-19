@@ -9,29 +9,70 @@ type Worker =
   | Run
 
 type Reporter =
-  | TestStart of id:Guid
+  | TestStart of description:string * id:Guid
   | Print of message:string * id:Guid
-  | TestEnd of id:Guid
+  | Skip of id:Guid
+  | Todo of id:Guid
+  | Pass of id:Guid
+  | Fail of id:Guid * ex:Exception
+
+let colorWriteReset color message =
+  Console.ForegroundColor <- color
+  printfn "%s" message
+  Console.ResetColor()
+
+let private printError (ex : Exception) =
+  colorWriteReset ConsoleColor.Red "Error: "
+  printfn "%s" ex.Message
+  printfn "%s" "Stack: "
+  ex.StackTrace.Split([| "\r\n"; "\n" |], StringSplitOptions.None)
+  |> Array.iter (fun trace ->
+    Console.ResetColor()
+    if trace.Contains(".FSharp.") then
+      printfn "%s" trace
+    else
+      if trace.Contains(":line") then
+        let beginning = trace.Split([| ":line" |], StringSplitOptions.None).[0]
+        let line = trace.Split([| ":line" |], StringSplitOptions.None).[1]
+        printf "%s" beginning
+        colorWriteReset ConsoleColor.DarkGreen (":line" + line)
+      else
+        colorWriteReset ConsoleColor.DarkGreen trace
+    Console.ResetColor())
 
 let newReporter () : actor<Reporter> =
-  let dict = new Dictionary<Guid, string list>()
+  let dict = new Dictionary<Guid, (ConsoleColor * string) list>()
+  let printMessages id = dict.[id] |> List.rev |> List.iter (fun (color, message) -> colorWriteReset color message)
   actor.Start(fun self ->
-    let rec loop () =
+    let rec loop passed failed skipped todo =
       async {
         let! msg = self.Receive ()
         match msg with
-        | Reporter.TestStart(id) ->
-          dict.Add(id, [])
-          return! loop ()
+        | Reporter.TestStart(description, id) ->
+          let message = sprintf "Test: %s" description
+          dict.Add(id, [ConsoleColor.DarkCyan, message])
+          return! loop passed failed skipped todo
         | Reporter.Print(message, id) ->
-          dict.[id] <- message::dict.[id] //prepend new message
-          return! loop ()
-        | Reporter.TestEnd(id) ->
-          dict.[id] |> List.rev |> List.iter (fun message -> printfn "%s" message)
-          printfn "Passed"
-          return! loop ()
+          dict.[id] <- (ConsoleColor.Black, message)::dict.[id] //prepend new message
+          return! loop passed failed skipped todo
+        | Reporter.Pass(id) ->
+          printMessages id
+          colorWriteReset ConsoleColor.Green "Passed"
+          return! loop (passed + 1) failed skipped todo
+        | Reporter.Fail(id, ex) ->
+          printMessages id
+          printError ex
+          return! loop passed (failed + 1) skipped todo
+        | Reporter.Skip(id) ->
+          printMessages id
+          colorWriteReset ConsoleColor.Yellow "Skipped"
+          return! loop passed failed (skipped + 1) todo
+        | Reporter.Todo(id) ->
+          printMessages id
+          colorWriteReset ConsoleColor.Yellow "Todo"
+          return! loop passed failed skipped (todo + 1)
       }
-    loop ())
+    loop 0 0 0 0)
 
 type TestContext (testId:Guid, reporter : actor<Reporter>) = class
   member x.TestId = testId
@@ -63,7 +104,7 @@ let private ng() = Guid.NewGuid()
 
 let private reporter = newReporter()
 let mutable suites = [new Suite()]
-let mutable todo = fun () -> ()
+let mutable todo = fun _ -> ()
 let mutable skipped = fun _ -> ()
 
 let context c =
@@ -84,20 +125,16 @@ let ( &&! ) description _ =
 let maxDOP = 30
 
 let private runtest (suite : Suite) (test : Test) =
-  reporter.Post(Reporter.TestStart test.Id)
-  //if System.Object.ReferenceEquals(test.Func, todo) then
-  //  ()
-  //  //reporter.todo ()
-  //else if System.Object.ReferenceEquals(test.Func, skipped) then
-  //  ()
-  //  //skip test.Id
-  //else
-  //  ()
-  test.Func (TestContext(test.Id, reporter))
-    //tryTest test suite (suite.Before >> test.Func)
-    //tryTest test suite (suite.After >> pass)
-
-  reporter.Post(Reporter.TestEnd test.Id)
+  reporter.Post(Reporter.TestStart(test.Description, test.Id))
+  if System.Object.ReferenceEquals(test.Func, todo) then
+    reporter.Post(Reporter.Todo test.Id)
+  else if System.Object.ReferenceEquals(test.Func, skipped) then
+    reporter.Post(Reporter.Skip test.Id)
+  else
+    try
+      test.Func (TestContext(test.Id, reporter))
+      reporter.Post(Reporter.Pass test.Id)
+    with ex -> reporter.Post(Reporter.Fail(test.Id, ex))
 
 let newWorker (manager : actor<Manager>) suite test : actor<Worker> =
   actor.Start(fun self ->
@@ -121,7 +158,7 @@ let newManager () : actor<Manager> =
         match msg with
         | Manager.Initialize (suites) ->
           //build a worker per suite/test combo and give them their work
-          let workers = suites |> List.map (fun suite -> suite.Tests |> List.map (fun test -> newWorker self suite test)) |> List.concat
+          let workers = suites |> List.map (fun suite -> suite.Tests |> List.map (fun test -> newWorker self suite test)) |> List.concat |> List.rev
           return! loop workers
         | Manager.Start ->
           //kick off the initial X workers
@@ -154,13 +191,19 @@ let run () =
 //demo
 context "Test Context"
 
-[1..200]
+
+"Skipped test" &&! fun ctx ->
+  ()
+
+"Todo test" &&& todo
+
+[1..50]
 |> List.iter (fun i ->
   sprintf "Test %i" i &&& fun ctx ->
     ctx.printfn "A guid %A" (ng())
     ctx.printfn "I am test %i" i
-    ctx.printfn "A guid %A" (ng())
-    ())
+    if i % 10 = 0 then failwith "mod error"
+    ctx.printfn "A guid %A" (ng()))
 
 run()
 
