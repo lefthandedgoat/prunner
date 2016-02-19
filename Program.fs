@@ -4,6 +4,7 @@ open System
 open System.Collections.Generic
 
 type actor<'t> = MailboxProcessor<'t>
+type color = System.ConsoleColor
 
 type Worker =
   | Run
@@ -15,6 +16,7 @@ type Reporter =
   | Todo of id:Guid
   | Pass of id:Guid
   | Fail of id:Guid * ex:Exception
+  | RunOver of minutes:int * seconds:int
 
 let colorWriteReset color message =
   Console.ForegroundColor <- color
@@ -22,7 +24,7 @@ let colorWriteReset color message =
   Console.ResetColor()
 
 let private printError (ex : Exception) =
-  colorWriteReset ConsoleColor.Red "Error: "
+  colorWriteReset color.Red "Error: "
   printfn "%s" ex.Message
   printfn "%s" "Stack: "
   ex.StackTrace.Split([| "\r\n"; "\n" |], StringSplitOptions.None)
@@ -35,13 +37,13 @@ let private printError (ex : Exception) =
         let beginning = trace.Split([| ":line" |], StringSplitOptions.None).[0]
         let line = trace.Split([| ":line" |], StringSplitOptions.None).[1]
         printf "%s" beginning
-        colorWriteReset ConsoleColor.DarkGreen (":line" + line)
+        colorWriteReset color.DarkGreen (":line" + line)
       else
-        colorWriteReset ConsoleColor.DarkGreen trace
+        colorWriteReset color.DarkGreen trace
     Console.ResetColor())
 
 let newReporter () : actor<Reporter> =
-  let dict = new Dictionary<Guid, (ConsoleColor * string) list>()
+  let dict = new Dictionary<Guid, (color * string) list>()
   let printMessages id = dict.[id] |> List.rev |> List.iter (fun (color, message) -> colorWriteReset color message)
   actor.Start(fun self ->
     let rec loop passed failed skipped todo =
@@ -50,27 +52,35 @@ let newReporter () : actor<Reporter> =
         match msg with
         | Reporter.TestStart(description, id) ->
           let message = sprintf "Test: %s" description
-          dict.Add(id, [ConsoleColor.DarkCyan, message])
+          dict.Add(id, [color.DarkCyan, message])
           return! loop passed failed skipped todo
         | Reporter.Print(message, id) ->
-          dict.[id] <- (ConsoleColor.Black, message)::dict.[id] //prepend new message
+          dict.[id] <- (color.Black, message)::dict.[id] //prepend new message
           return! loop passed failed skipped todo
-        | Reporter.Pass(id) ->
+        | Reporter.Pass id ->
           printMessages id
-          colorWriteReset ConsoleColor.Green "Passed"
+          colorWriteReset color.Green "Passed"
           return! loop (passed + 1) failed skipped todo
         | Reporter.Fail(id, ex) ->
           printMessages id
           printError ex
           return! loop passed (failed + 1) skipped todo
-        | Reporter.Skip(id) ->
+        | Reporter.Skip id ->
           printMessages id
-          colorWriteReset ConsoleColor.Yellow "Skipped"
+          colorWriteReset color.Yellow "Skipped"
           return! loop passed failed (skipped + 1) todo
-        | Reporter.Todo(id) ->
+        | Reporter.Todo id ->
           printMessages id
-          colorWriteReset ConsoleColor.Yellow "Todo"
+          colorWriteReset color.Yellow "Todo"
           return! loop passed failed skipped (todo + 1)
+        | Reporter.RunOver (minutes, seconds) ->
+            printfn ""
+            printfn "%i minutes %i seconds to execute" minutes seconds
+            colorWriteReset color.Green (sprintf "%i passed" passed)
+            colorWriteReset color.Yellow (sprintf "%i skipped" skipped)
+            colorWriteReset color.Yellow (sprintf "%i todo" todo)
+            colorWriteReset color.Red (sprintf "%i failed" failed)
+            return ()
       }
     loop 0 0 0 0)
 
@@ -152,33 +162,38 @@ let newWorker (manager : actor<Manager>) suite test : actor<Worker> =
 let newManager () : actor<Manager> =
   let sw = System.Diagnostics.Stopwatch.StartNew()
   actor.Start(fun self ->
-    let rec loop workers =
+    let rec loop workers maxWorkers doneWorkers =
       async {
         let! msg = self.Receive ()
         match msg with
         | Manager.Initialize (suites) ->
           //build a worker per suite/test combo and give them their work
           let workers = suites |> List.map (fun suite -> suite.Tests |> List.map (fun test -> newWorker self suite test)) |> List.concat |> List.rev
-          return! loop workers
+          return! loop workers workers.Length 0
         | Manager.Start ->
           //kick off the initial X workers
           self.Post(Manager.Run maxDOP)
-          return! loop workers
+          return! loop workers maxWorkers doneWorkers
         | Manager.Run(count) ->
           if count = 0 then
-            return! loop workers
+            return! loop workers maxWorkers doneWorkers
           else
             match workers with
-            | [] -> printfn "Done no more tests! in %A" sw.Elapsed.TotalSeconds; return ()
+            | [] -> return! loop [] maxWorkers doneWorkers
             | head :: tail ->
               head.Post(Worker.Run)
               self.Post(Manager.Run(count - 1))
-              return! loop tail
+              return! loop tail maxWorkers doneWorkers
         | Manager.WorkerDone ->
           self.Post(Manager.Run(1))
-          return! loop workers
+          let doneWorkers = doneWorkers + 1
+          if doneWorkers = maxWorkers then
+            reporter.Post(Reporter.RunOver(int sw.Elapsed.TotalMinutes, int sw.Elapsed.TotalSeconds))
+            return ()
+          else
+            return! loop workers maxWorkers doneWorkers
       }
-    loop [])
+    loop [] 0 0)
 
 let run () =
   let stopWatch = Diagnostics.Stopwatch.StartNew
@@ -191,16 +206,13 @@ let run () =
 //demo
 context "Test Context"
 
-
-"Skipped test" &&! fun ctx ->
-  ()
+"Skipped test" &&! fun ctx -> ()
 
 "Todo test" &&& todo
 
-[1..50]
+[1..11]
 |> List.iter (fun i ->
   sprintf "Test %i" i &&& fun ctx ->
-    ctx.printfn "A guid %A" (ng())
     ctx.printfn "I am test %i" i
     if i % 10 = 0 then failwith "mod error"
     ctx.printfn "A guid %A" (ng()))
