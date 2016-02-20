@@ -178,6 +178,7 @@ let newManager maxDOP : actor<Manager> =
         match msg with
         | Manager.Initialize (suites) ->
           //build a worker per suite/test combo and give them their work
+          let suites = suites |> List.rev
           let wipWorkers = suites |> List.map (fun suite -> suite.Wips |> List.map (fun test -> suite, newWorker self suite test)) |> List.concat |> List.rev
           let workers = suites |> List.map (fun suite -> suite.Tests |> List.map (fun test -> suite, newWorker self suite test)) |> List.concat |> List.rev
           if wipWorkers.IsEmpty then
