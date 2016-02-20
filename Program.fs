@@ -10,6 +10,8 @@ type Worker =
   | Run
 
 type Reporter =
+  | ContextStart of description:string
+  | ContextEnd of description:string
   | TestStart of description:string * id:Guid
   | Print of message:string * id:Guid
   | Skip of id:Guid
@@ -17,6 +19,28 @@ type Reporter =
   | Pass of id:Guid
   | Fail of id:Guid * ex:Exception
   | RunOver of minutes:int * seconds:int * AsyncReplyChannel<int>
+
+type TestContext (testId:Guid, reporter : actor<Reporter>) = class
+  member x.TestId = testId
+  member x.printfn fmtStr = Printf.kprintf (fun msg -> reporter.Post(Print(msg, x.TestId))) fmtStr
+end
+
+type Test (description: string, func : (TestContext -> unit), id : Guid) =
+  member x.Description = description
+  member x.Func = func
+  member x.Id = id
+
+type Suite () = class
+  member val Context : string = "" with get, set
+  member val Tests : Test list = [] with get, set
+  member val Wips : Test list = [] with get, set
+end
+
+type Manager =
+  | Initialize of Suite list
+  | Start of AsyncReplyChannel<int>
+  | Run of count:int
+  | WorkerDone of suite:string * worker:actor<Worker>
 
 let colorWriteReset color message =
   Console.ForegroundColor <- color
@@ -43,19 +67,27 @@ let private printError (ex : Exception) =
     Console.ResetColor())
 
 let newReporter () : actor<Reporter> =
-  let dict = new Dictionary<Guid, (color * string) list>()
-  let printMessages id = dict.[id] |> List.rev |> List.iter (fun (color, message) -> colorWriteReset color message)
+  let messages = new Dictionary<Guid, (color * string) list>()
+  let printMessages id = messages.[id] |> List.rev |> List.iter (fun (color, message) -> colorWriteReset color message)
   actor.Start(fun self ->
     let rec loop passed failed skipped todo =
       async {
         let! msg = self.Receive ()
         match msg with
+        | ContextStart description ->
+          let message = sprintf "context: %s" description
+          colorWriteReset color.DarkYellow message
+          return! loop passed failed skipped todo
+        | ContextEnd description ->
+          let message = sprintf "context end: %s" description
+          colorWriteReset color.DarkYellow message
+          return! loop passed failed skipped todo
         | Reporter.TestStart(description, id) ->
           let message = sprintf "Test: %s" description
-          dict.Add(id, [color.DarkCyan, message])
+          messages.Add(id, [color.DarkCyan, message])
           return! loop passed failed skipped todo
         | Reporter.Print(message, id) ->
-          dict.[id] <- (color.Black, message)::dict.[id] //prepend new message
+          messages.[id] <- (color.Black, message)::messages.[id] //prepend new message
           return! loop passed failed skipped todo
         | Reporter.Pass id ->
           printMessages id
@@ -85,28 +117,6 @@ let newReporter () : actor<Reporter> =
       }
     loop 0 0 0 0)
 
-type TestContext (testId:Guid, reporter : actor<Reporter>) = class
-  member x.TestId = testId
-  member x.printfn fmtStr = Printf.kprintf (fun msg -> reporter.Post(Print(msg, x.TestId))) fmtStr
-end
-
-type Test (description: string, func : (TestContext -> unit), id : Guid) =
-  member x.Description = description
-  member x.Func = func
-  member x.Id = id
-
-type Suite () = class
-  member val Context : string = "" with get, set
-  member val Tests : Test list = [] with get, set
-  member val Wips : Test list = [] with get, set
-end
-
-type Manager =
-  | Initialize of Suite list
-  | Start of AsyncReplyChannel<int>
-  | Run of count:int
-  | WorkerDone
-
 let private last = function
   | hd :: _ -> hd
   | [] -> failwith "Empty list."
@@ -115,8 +125,8 @@ let private ng() = Guid.NewGuid()
 
 let private reporter = newReporter()
 let mutable suites = [new Suite()]
-let mutable todo = fun _ -> ()
-let mutable skipped = fun _ -> ()
+let todo = fun _ -> ()
+let skipped = fun _ -> ()
 
 let context c =
   if (last suites).Context = null then
@@ -145,7 +155,7 @@ let private runtest (test : Test) =
       reporter.Post(Reporter.Pass test.Id)
     with ex -> reporter.Post(Reporter.Fail(test.Id, ex))
 
-let newWorker (manager : actor<Manager>) test : actor<Worker> =
+let newWorker (manager : actor<Manager>) (suite:Suite) test : actor<Worker> =
   actor.Start(fun self ->
     let rec loop () =
       async {
@@ -153,47 +163,56 @@ let newWorker (manager : actor<Manager>) test : actor<Worker> =
         match msg with
         | Worker.Run ->
           runtest test
-          manager.Post(Manager.WorkerDone)
+          manager.Post(Manager.WorkerDone(suite.Context, self))
           return ()
       }
     loop ())
 
 let newManager maxDOP : actor<Manager> =
   let sw = System.Diagnostics.Stopwatch.StartNew()
+  let contexts = new HashSet<string>()
   actor.Start(fun self ->
-    let rec loop workers maxWorkers doneWorkers replyChannel =
+    let rec loop workers pendingWorkers replyChannel =
       async {
         let! msg = self.Receive ()
         match msg with
         | Manager.Initialize (suites) ->
           //build a worker per suite/test combo and give them their work
-          let workers = suites |> List.map (fun suite -> suite.Tests |> List.map (fun test -> newWorker self test)) |> List.concat |> List.rev
-          return! loop workers workers.Length 0 replyChannel
+          let workers = suites |> List.map (fun suite -> suite.Tests |> List.map (fun test -> suite, newWorker self suite test)) |> List.concat |> List.rev
+          return! loop workers pendingWorkers replyChannel
         | Manager.Start(replyChannel) ->
           //kick off the initial X workers
           self.Post(Manager.Run maxDOP)
-          return! loop workers maxWorkers doneWorkers (Some replyChannel)
+          return! loop workers pendingWorkers (Some replyChannel)
         | Manager.Run(count) ->
           if count = 0 then
-            return! loop workers maxWorkers doneWorkers replyChannel
+            return! loop workers [] replyChannel
           else
             match workers with
-            | [] -> return! loop [] maxWorkers doneWorkers replyChannel
-            | head :: tail ->
+            | [] -> return! loop workers pendingWorkers replyChannel
+            | (suite, head) :: tail ->
+              if not <| contexts.Contains(suite.Context) then
+                contexts.Add(suite.Context) |> ignore
+                reporter.Post(Reporter.ContextStart suite.Context)
+              let pendingWorkers = (suite,head)::pendingWorkers
               head.Post(Worker.Run)
               self.Post(Manager.Run(count - 1))
-              return! loop tail maxWorkers doneWorkers replyChannel
-        | Manager.WorkerDone ->
+              return! loop tail pendingWorkers replyChannel
+        | Manager.WorkerDone(suiteContext, doneWorker) ->
+          let pendingWorkers = pendingWorkers |> List.filter (fun (_, pendingWorker) -> pendingWorker <> doneWorker)
           self.Post(Manager.Run(1))
-          let doneWorkers = doneWorkers + 1
-          if doneWorkers = maxWorkers then
+          let remainingWorkersForSuite = workers |> List.filter (fun (suite,_) -> suiteContext = suite.Context)
+          let pendingWorkersForSuite = pendingWorkers |> List.filter (fun (suite,_) -> suiteContext = suite.Context)
+          if remainingWorkersForSuite.IsEmpty && pendingWorkersForSuite.IsEmpty then
+            reporter.Post(Reporter.ContextEnd suiteContext)
+          if pendingWorkers.IsEmpty && workers.IsEmpty then
             let failed = reporter.PostAndReply(fun replyChannel -> Reporter.RunOver(int sw.Elapsed.TotalMinutes, int sw.Elapsed.TotalSeconds, replyChannel))
             replyChannel.Value.Reply failed
             return ()
           else
-            return! loop workers maxWorkers doneWorkers replyChannel
+            return! loop workers pendingWorkers replyChannel
       }
-    loop [] 0 0 None)
+    loop [] [] None)
 
 let run maxDOP =
   // suites list is in reverse order and have to be reversed before running the tests
@@ -213,8 +232,14 @@ context "Test Context"
 |> List.iter (fun i ->
   sprintf "Test %i" i &&& fun ctx ->
     ctx.printfn "I am test %i" i
-    if i % 10 = 0 then failwith "mod error"
+    if i % 10 = 0 then failwith "intentional mod error"
     ctx.printfn "A guid %A" (ng()))
+
+context "Test Context2"
+
+"Skipped test 2" &&! fun _ -> ()
+
+"Todo test 2" &&& todo
 
 let maxDOP = 30
 let failedTest = run maxDOP
