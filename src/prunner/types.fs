@@ -22,10 +22,12 @@ type TestContext (testId:Guid, reporter : actor<Reporter>) = class
   member x.printfn fmtStr = Printf.kprintf (fun msg -> reporter.Post(Print(msg, x.TestId))) fmtStr
 end
 
-type Test (description: string, func : (TestContext -> unit), id : Guid) =
-  member x.Description = description
-  member x.Func = func
-  member x.Id = id
+type Test =
+  {
+    Description : string
+    Func : TestContext -> unit
+    Id : Guid
+  }
 
 type Suite () = class
   member val Context : string = "" with get, set

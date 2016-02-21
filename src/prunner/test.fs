@@ -23,8 +23,8 @@ let context c =
     suites <- s::suites
 
 let ( &&& ) description f =
-    (last suites).Tests <- Test(description, f, ng())::(last suites).Tests
+    (last suites).Tests <- { Description = description; Func = f; Id = ng() }::(last suites).Tests
 let ( &&&& ) description f =
-    (last suites).Wips <- Test(description, f, ng())::(last suites).Wips
+    (last suites).Wips <- { Description = description; Func = f; Id = ng() }::(last suites).Wips
 let ( &&! ) description _ =
-    (last suites).Tests <- Test(description, skipped, ng())::(last suites).Tests
+    (last suites).Tests <- { Description = description; Func = skipped; Id = ng() }::(last suites).Tests
