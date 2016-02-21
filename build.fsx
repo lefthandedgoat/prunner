@@ -43,8 +43,7 @@ let tags = "f# load testing"
 let solutionFile  = "prunner.sln"
 
 // Pattern specifying assemblies to be tested using NUnit
-let exe = "bin/Debug/"
-
+let exe = "src/example/bin/Debug/"
 
 // --------------------------------------------------------------------------------------
 // END TODO: The rest of the file includes standard build steps
@@ -116,7 +115,7 @@ Target "Build" (fun _ ->
 Target "RunExe" (fun _ ->
   let result =
     ExecProcess (fun info ->
-                 info.FileName <- (exe @@ "prunner.exe")
+                 info.FileName <- (exe @@ "example.exe")
                  ) (System.TimeSpan.FromMinutes 5.)
 
   if result <> 0 then failwith "Failed result from unit tests"

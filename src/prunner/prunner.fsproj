@@ -5,8 +5,8 @@
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <SchemaVersion>2.0</SchemaVersion>
-    <ProjectGuid>{64EDF01D-DC76-43CF-8BC2-5157B841510E}</ProjectGuid>
-    <OutputType>Exe</OutputType>
+    <ProjectGuid>{64EDF01D-DC76-43CF-8BC2-5157B841511E}</ProjectGuid>
+    <OutputType>Library</OutputType>
     <RootNamespace>prunner</RootNamespace>
     <AssemblyName>prunner</AssemblyName>
     <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
@@ -17,6 +17,7 @@
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
     <Optimize>false</Optimize>
     <Tailcalls>false</Tailcalls>
     <OutputPath>bin\Debug</OutputPath>
@@ -63,10 +64,6 @@
     <Compile Include="printer.fs" />
     <Compile Include="test.fs" />
     <Compile Include="actors.fs" />
-    <Compile Include="Program.fs" />
-    <Content Include="App.config">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
   </ItemGroup>
   <ItemGroup>
     <Reference Include="mscorlib" />
