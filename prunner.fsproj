@@ -59,6 +59,10 @@
   </Target>
   -->
   <ItemGroup>
+    <Compile Include="types.fs" />
+    <Compile Include="printer.fs" />
+    <Compile Include="test.fs" />
+    <Compile Include="actors.fs" />
     <Compile Include="Program.fs" />
     <Content Include="App.config">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
