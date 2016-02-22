@@ -16,7 +16,9 @@ context "Test Context"
   sprintf "Test %i" i &&& fun ctx ->
     ctx.printfn "I am test %i" i
     if i % 10 = 0 then failwith "intentional mod error"
-    ctx.printfn "A guid %A" (Guid.NewGuid()))
+    ctx.printfn "A guid %A" (Guid.NewGuid())
+    1 == 1
+    "cat" != "dog")
 
 context "Test Context2"
 

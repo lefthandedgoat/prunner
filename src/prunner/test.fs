@@ -110,3 +110,16 @@ let ( &&&& ) description f =
     (last suites).Wips <- { Description = description; Func = f; Id = ng() }::(last suites).Wips
 let ( &&! ) description _ =
     (last suites).Tests <- { Description = description; Func = skipped; Id = ng() }::(last suites).Tests
+
+let nl = System.Environment.NewLine
+(*
+   Infix operators
+   F# does not have == and != like other lanuages, so we can steal them
+   for our assertions
+*)
+let ( == ) expected actual = if expected <> actual then failwith <| sprintf "FAILURE%sexpected: %A%sgot: %A%s" nl expected nl actual nl
+let ( != ) expected actual = if expected = actual then failwith <| sprintf "FAILURE%sexpected: NOT %A%sgot: %A%s" nl expected nl actual nl
+
+(*
+   Add more assertions to your liking!
+*)
