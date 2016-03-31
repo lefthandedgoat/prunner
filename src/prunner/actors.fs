@@ -75,12 +75,26 @@ let newReporter () : actor<Reporter> =
 *)
 let reporter = newReporter()
 
+let newSleeper () : actor<Sleeper> =
+  actor.Start(fun self ->
+    let rec loop () =
+      async {
+        let! msg = self.Receive ()
+        match msg with
+        | Sleeper.Sleep(ms, replyChannel) ->
+            do! Async.Sleep(ms)
+            replyChannel.Reply()
+            return! loop ()
+      }
+    loop ())
+
 (*
    Private Function
    The logic to run a test is big enough to extract out of the
    worker actor and into a private helper function.
 *)
 let private runtest (test : Test) =
+  let sw = System.Diagnostics.Stopwatch.StartNew()
   reporter.Post(Reporter.TestStart(test.Description, test.Id))
   if System.Object.ReferenceEquals(test.Func, todo) then
     reporter.Post(Reporter.Todo test.Id)
@@ -88,7 +102,8 @@ let private runtest (test : Test) =
     reporter.Post(Reporter.Skip test.Id)
   else
     try
-      test.Func (TestContext(test.Id, reporter))
+      test.Func (TestContext(test.Id, reporter, newSleeper()))
+      reporter.Post(Print(sprintf "Done in: %A" sw.Elapsed.TotalSeconds, test.Id))
       reporter.Post(Reporter.Pass test.Id)
     with ex -> reporter.Post(Reporter.Fail(test.Id, ex))
 

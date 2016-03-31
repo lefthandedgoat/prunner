@@ -51,6 +51,9 @@ type Reporter =
   | Fail of id:Guid * ex:Exception
   | RunOver of minutes:int * seconds:int * AsyncReplyChannel<int>
 
+type Sleeper =
+  | Sleep of ms:int * AsyncReplyChannel<unit>
+
 (*
    Classes
    Not much different than other languages, just syntactically different
@@ -60,9 +63,10 @@ type Reporter =
    Test context just holds some data about test, and is passed into a test's body
    allowing the test to print to the reporter
 *)
-type TestContext (testId:Guid, reporter : actor<Reporter>) = class
+type TestContext (testId:Guid, reporter : actor<Reporter>, sleeper : actor<Sleeper>) = class
   member x.TestId = testId
   member x.printfn fmtStr = Printf.kprintf (fun msg -> reporter.Post(Print(msg, x.TestId))) fmtStr
+  member x.sleep ms = sleeper.PostAndReply(fun replyChannel -> Sleeper.Sleep(ms, replyChannel))
 end
 
 (*

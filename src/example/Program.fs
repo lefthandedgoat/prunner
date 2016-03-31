@@ -11,10 +11,19 @@ context "Test Context"
 
 "Todo test" &&& todo
 
-[1..11]
+let random = System.Random()
+[1..100]
 |> List.iter (fun i ->
   sprintf "Test %i" i &&& fun ctx ->
     ctx.printfn "I am test %i" i
+    let sleepTime =
+      if i % 10 = 0 then
+        40 * 1000
+      else
+        random.Next(1, 5) * 100
+
+    //ctx.sleep sleepTime
+    System.Threading.Thread.Sleep sleepTime
     if i % 10 = 0 then failwith "intentional mod error"
     ctx.printfn "A guid %A" (Guid.NewGuid())
     1 == 1
@@ -26,6 +35,6 @@ context "Test Context2"
 
 "Todo test 2" &&& todo
 
-let maxDOP = 100
+let maxDOP = 12
 let failedTest = run maxDOP
 printfn "final failed count %A" failedTest
