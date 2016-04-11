@@ -179,7 +179,7 @@ let newManager maxDOP : actor<Manager> =
             if workersForSuite.IsEmpty && pendingWorkersForSuite.IsEmpty then
               reporter.Post(Reporter.ContextEnd suiteContext)
             if pendingWorkers.IsEmpty && workers.IsEmpty then
-              let failed = reporter.PostAndReply(fun replyChannel -> Reporter.RunOver(int sw.Elapsed.TotalMinutes, int sw.Elapsed.TotalSeconds, replyChannel))
+              let failed = reporter.PostAndReply(fun replyChannel -> Reporter.RunOver(int sw.Elapsed.TotalMinutes, int sw.Elapsed.Seconds, replyChannel))
               replyChannel.Value.Reply failed
               return! loop workers pendingWorkers replyChannel
             else
