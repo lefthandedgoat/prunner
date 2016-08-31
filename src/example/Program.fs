@@ -7,25 +7,66 @@ open prunner
 //demo
 context "Test Context"
 
-"Skipped test" &&! fun _ -> ()
+let delimeters = ["\n"; ","]
 
-"Todo test" &&& todo
+let add2 numbers delimeters =
+  if numbers = "" then
+    0
+  else
+    let mutable numbers = numbers
+    delimeters |> List.iter (fun delimeter -> numbers <- numbers.Replace(delimeter, ","))
+    let numbers =
+      numbers.Split(',')
+      |> List.ofArray
+      |> List.map int
+      |> List.filter (fun number -> number <= 1000)
+    let negatives = numbers |> List.filter (fun number -> number < 0)
+    if negatives = [] then
+      numbers |> List.sum
+    else
+      failwith <| sprintf "These numbers are negative and are not allowed %A" negatives
 
-[1..11]
-|> List.iter (fun i ->
-  sprintf "Test %i" i &&& fun ctx ->
-    ctx.printfn "I am test %i" i
-    if i % 10 = 0 then failwith "intentional mod error"
-    ctx.printfn "A guid %A" (Guid.NewGuid())
-    1 == 1
-    "cat" != "dog")
+let add numbers = add2 numbers delimeters
 
-context "Test Context2"
+"1 - empty string equals 0" &&& fun ctx ->
+  add "" == 0
 
-"Skipped test 2" &&! fun _ -> ()
+"1 - '1' string equals 1" &&& fun ctx ->
+  add "1" == 1
 
-"Todo test 2" &&& todo
+"1 - '1,2' string equals 3" &&& fun ctx ->
+  add "1,2" == 3
 
-let maxDOP = 100
+"2 - '1,2,3' string equals 6" &&& fun ctx ->
+  add "1,2,3" == 6
+
+"2 - '1,2,3,4,5' string equals 15" &&& fun ctx ->
+  add "1,2,3,4,5" == 15
+
+"3 - '1\n2,3' string equals 15" &&& fun ctx ->
+  add "1\n2,3" == 6
+
+"4 - '1;2' string equals 3" &&& fun ctx ->
+  add2 "1;2" [";"] == 3
+
+"5 - '-1;2' fails" &&& fun ctx ->
+  add2 "-1;2" [";"] == 3
+
+"5 - '-1;-2' fails" &&& fun ctx ->
+  add2 "-1;-2" [";"] == 3
+
+"6 - '2;1001' string equals 2" &&& fun ctx ->
+  add2 "2;1001" [";"] == 2
+
+"7 - '2***3***4' string equals 9" &&& fun ctx ->
+  add2 "2***3***4" ["***"] == 9
+
+"8 - '1*2%3' string equals 6" &&& fun ctx ->
+  add2 "1*2%3" ["*"; "%"] == 6
+
+"9 - '1***2%4' string equals 7" &&& fun ctx ->
+  add2 "1***2%4" ["***"; "%"] == 7
+
+let maxDOP = 1
 let failedTest = run maxDOP
 printfn "final failed count %A" failedTest
